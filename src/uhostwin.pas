@@ -18,6 +18,19 @@ uses
   Windows, Messages, SysUtils, MMSystem, utoasterrender, utoasterconfig,
   utoasterapp, utoasteraudio;
 
+{ FPC 3.2.2's Win32 Windows unit has no multi-monitor API. user32 does. }
+{$if not declared(MonitorFromWindow)}
+type
+  HMONITOR = type THandle;
+  TMonitorInfo = record
+    cbSize: DWORD;
+    rcMonitor: TRect;
+    rcWork: TRect;
+    dwFlags: DWORD;
+  end;
+  PMonitorInfo = ^TMonitorInfo;
+{$endif}
+
 const
   AppName = 'FlyingToastersWnd';
   CmdAbout = 1001;
@@ -32,6 +45,9 @@ const
   MinH = 200;
   TickId = 1;
   TickMs = 33;
+{$if not declared(MONITOR_DEFAULTTONEAREST)}
+  MONITOR_DEFAULTTONEAREST = 2;
+{$endif}
 
 var
   Controller: TToasterController;
@@ -45,6 +61,13 @@ var
   WavHold: array of Byte;
   LastAudio: Integer;
   LastPlay: Boolean;
+
+{$if not declared(MonitorFromWindow)}
+function MonitorFromWindow(hwnd: HWND; dwFlags: DWORD): HMONITOR; stdcall;
+  external 'user32.dll' name 'MonitorFromWindow';
+function GetMonitorInfo(hMonitor: HMONITOR; lpmi: PMonitorInfo): BOOL; stdcall;
+  external 'user32.dll' name 'GetMonitorInfoA';
+{$endif}
 
 procedure StopWinAudio;
 begin
