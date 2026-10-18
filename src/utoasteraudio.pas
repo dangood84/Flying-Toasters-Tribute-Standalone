@@ -15,6 +15,12 @@ const
   MidiBpm = 120;
   MidiPpq = 480;
   MidiLoopBeats = 16; { 8 seconds at 120 BPM, 4/4 }
+  MarchSampleRate = 22050;
+
+function MidiLoopSeconds: Double;
+function BuildMidiFile(Mode: TAudioMode): TBytes;
+function BuildMarchWav(Mode: TAudioMode): TBytes;
+function BuildMarchPcm(Mode: TAudioMode): TBytes;
 
 type
   TMidiMsg = record
@@ -26,9 +32,6 @@ type
     On: array of Boolean;
   end;
 
-function MidiLoopSeconds: Double;
-function BuildMidiFile(Mode: TAudioMode): TBytes;
-function BuildMarchWav(Mode: TAudioMode): TBytes;
 procedure AudioSeqInit(var Seq: TAudioSeq);
 function AudioSeqAdvance(var Seq: TAudioSeq; SongTime: Double; Mode: TAudioMode;
   Playing: Boolean): TMidiMsgArray;
@@ -270,8 +273,6 @@ begin
 end;
 
 function BuildMarchWav(Mode: TAudioMode): TBytes;
-const
-  Rate = 22050;
 var
   Samples, I, N, SCount: Integer;
   Acc, Phase, Hz, Amp, T, Duty: Double;
@@ -279,7 +280,7 @@ var
   P: Integer;
 begin
   EnsureScore;
-  Samples := Round(Rate * MidiLoopSeconds);
+  Samples := Round(MarchSampleRate * MidiLoopSeconds);
   SetLength(Result, 44 + Samples * 2);
   FillChar(Result[0], Length(Result), 0);
   Result[0] := Ord('R'); Result[1] := Ord('I'); Result[2] := Ord('F'); Result[3] := Ord('F');
@@ -301,7 +302,7 @@ begin
   SCount := Length(Score);
   for I := 0 to Samples - 1 do
   begin
-    T := I / Rate;
+    T := I / MarchSampleRate;
     Acc := 0;
     for N := 0 to SCount - 1 do
     begin
@@ -327,6 +328,18 @@ begin
     Result[44 + I * 2] := Byte(V);
     Result[45 + I * 2] := Byte(V shr 8);
   end;
+end;
+
+function BuildMarchPcm(Mode: TAudioMode): TBytes;
+var
+  Wav: TBytes;
+begin
+  Result := nil;
+  Wav := BuildMarchWav(Mode);
+  if Length(Wav) <= 44 then
+    Exit;
+  SetLength(Result, Length(Wav) - 44);
+  Move(Wav[44], Result[0], Length(Result));
 end;
 
 procedure AudioSeqInit(var Seq: TAudioSeq);

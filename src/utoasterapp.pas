@@ -26,7 +26,8 @@ const
     'M    mute / MIDI march / choir (original tribute tune — not After Dark''s MIDI)' + LineEnding +
     'H    hide controls   Space pause   F11 fullscreen' + LineEnding + LineEnding +
     'Resize the window, or press F11 (Esc to leave) for fullscreen. ' +
-    'Double-click the sky to toggle. Closing the window quits.';
+    'Double-click the sky to toggle. Closing the window quits.' + LineEnding + LineEnding +
+    'Linux: install pipewire-bin, pulseaudio-utils, or alsa-utils so the march can play.';
 
 type
   TToasterController = class

@@ -104,6 +104,8 @@ Picks one host with `{$IFDEF}` and calls `HostRun`. Nothing else.
 
 Density 5–30, toast darkness, accessories, starfield, karaoke, audio mode, HUD. `LoadConfig` / `SaveConfig` write `flyingtoasters.ini` under `GetAppConfigDir`. **M** / **Sound → MIDI March** plays an original looping GM square-lead march (not After Dark's theme). Choir is the same score on GM choir aahs. Pause mutes playback.
 
+Linux does not spawn a player per toggle. `uhostgtk` opens one `pw-play` / `paplay` / `aplay` raw pipe at launch (the NoBugs / Hitchhiker's Panasonic-HDMI trick) and the 33 ms timer writes one slice. Mute is silence into that same pipe so the TV port stays awake.
+
 ### `utoastermodel` — the flock
 
 `TFlyingEntity` records, xorshift spawn, `Update(dt, w, h)`, wrap, `PlaceCataloguePose` for snapshots. No pixels.
@@ -118,4 +120,4 @@ Timer → `Tick` → `Update` + dirty flag. Keys through `ApplyChar`. Hosts neve
 
 ### Hosts — present bytes
 
-Cocoa copies RGBA into an `NSImage`. Windows flips to BGRA for `StretchDIBits`. GTK copies into a `GdkPixbuf`. Same controller on all three.
+Cocoa copies RGBA into an `NSImage`. Windows flips to BGRA for `StretchDIBits`. GTK copies into a `GdkPixbuf`. Same controller on all three. Linux sound is that one raw player, not a new process per **M**.

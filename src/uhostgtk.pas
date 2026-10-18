@@ -5,7 +5,13 @@ unit uhostgtk;
 { Linux GTK 2 window. Same TToasterController as macOS; this unit presents
   a GdkPixbuf on a drawing area, a 33 ms timeout, F11 fullscreen, and
   option keys. GTK 2 is the Raspberry Pi OS-friendly toolkit the other
-  Pascal apps use. }
+  Pascal apps use.
+
+  Sound is one raw pw-play / paplay / aplay stream for the life of the
+  window. NoBugs on a Panasonic television taught this: a fresh player
+  for every shout lets HDMI fall asleep, so the first pip is late or
+  missing. Silence keeps the port awake; MIDI/choir is mixed into the
+  next short slice. }
 
 interface
 
@@ -16,7 +22,8 @@ implementation
 {$IF DEFINED(UNIX) AND NOT DEFINED(DARWIN)}
 
 uses
-  SysUtils, ctypes, gtk2, gdk2, gdk2pixbuf, glib2, utoasterconfig, utoasterapp;
+  SysUtils, ctypes, Process, BaseUnix, gtk2, gdk2, gdk2pixbuf, glib2,
+  utoasterconfig, utoasterapp, utoasteraudio;
 
 const
   WinW = 800;
@@ -24,6 +31,7 @@ const
   MinW = 320;
   MinH = 200;
   TickMs = 33;
+  ChunkFrames = 728; { one paint tick, ~33 ms at MarchSampleRate }
 
   GDK_Escape = $FF1B;
   GDK_F11 = $FFC8;
@@ -39,6 +47,243 @@ var
   Pix: PGdkPixbuf;
   FullScreen: Boolean;
   AreaW, AreaH: Integer;
+  Player: TProcess;
+  Pending, MarchPcm: TBytes;
+  MarchPos: Integer;
+  LastAudio: Integer;
+  LastPlay: Boolean;
+  NextFeed: QWord;
+  RetryAt: QWord;
+  Reported: Boolean;
+
+function PlayerExe: string;
+begin
+  if FileExists('/usr/bin/pw-play') then
+    Result := '/usr/bin/pw-play'
+  else if FileExists('/usr/bin/pw-cat') then
+    Result := '/usr/bin/pw-cat'
+  else if FileExists('/usr/bin/paplay') then
+    Result := '/usr/bin/paplay'
+  else if FileExists('/usr/bin/aplay') then
+    Result := '/usr/bin/aplay'
+  else
+    Result := '';
+end;
+
+procedure Unblock(H: THandle);
+var
+  Flags: cint;
+begin
+  Flags := fpfcntl(H, F_GETFL);
+  if Flags >= 0 then
+    fpfcntl(H, F_SETFL, Flags or O_NONBLOCK);
+end;
+
+procedure SpeakPlayer;
+var
+  Buf: array[0..511] of Byte;
+  N, At: Integer;
+  Msg: string;
+begin
+  if (Player = nil) or (Player.Output = nil) then
+    Exit;
+  Msg := '';
+  repeat
+    N := FileRead(Player.Output.Handle, Buf, SizeOf(Buf));
+    if N > 0 then
+    begin
+      At := Length(Msg);
+      SetLength(Msg, At + N);
+      Move(Buf[0], Msg[At + 1], N);
+    end;
+  until N <= 0;
+  if Msg <> '' then
+  begin
+    Writeln(Msg);
+    Flush(Output);
+  end;
+end;
+
+procedure ClosePlayer;
+begin
+  FreeAndNil(Player);
+  Pending := nil;
+end;
+
+function OpenPlayer: Boolean;
+var
+  Exe, Name: string;
+begin
+  Result := False;
+  if GetTickCount64 < RetryAt then
+    Exit;
+  Exe := PlayerExe;
+  if Exe = '' then
+  begin
+    if not Reported then
+    begin
+      Writeln('audio channel: no pw-play, paplay, or aplay');
+      Flush(Output);
+      Reported := True;
+    end;
+    RetryAt := GetTickCount64 + 5000;
+    Exit;
+  end;
+  ClosePlayer;
+  Player := TProcess.Create(nil);
+  Player.Executable := Exe;
+  Name := ExtractFileName(Exe);
+  if (Name = 'pw-play') or (Name = 'pw-cat') then
+  begin
+    if Name = 'pw-cat' then
+      Player.Parameters.Add('--playback');
+    Player.Parameters.Add('--raw');
+    Player.Parameters.Add('--format=s16');
+    Player.Parameters.Add('--rate=' + IntToStr(MarchSampleRate));
+    Player.Parameters.Add('--channels=1');
+    Player.Parameters.Add('-');
+  end
+  else if Name = 'paplay' then
+  begin
+    Player.Parameters.Add('--raw');
+    Player.Parameters.Add('--format=s16le');
+    Player.Parameters.Add('--rate=' + IntToStr(MarchSampleRate));
+    Player.Parameters.Add('--channels=1');
+  end
+  else
+  begin
+    Player.Parameters.Add('-q');
+    Player.Parameters.Add('-t');
+    Player.Parameters.Add('raw');
+    Player.Parameters.Add('-f');
+    Player.Parameters.Add('S16_LE');
+    Player.Parameters.Add('-r');
+    Player.Parameters.Add(IntToStr(MarchSampleRate));
+    Player.Parameters.Add('-c');
+    Player.Parameters.Add('1');
+  end;
+  Player.Options := [poUsePipes, poStderrToOutPut];
+  try
+    Player.Execute;
+  except
+    ClosePlayer;
+    RetryAt := GetTickCount64 + 1000;
+    Exit;
+  end;
+  if Player.Input <> nil then
+    Unblock(Player.Input.Handle);
+  if Player.Output <> nil then
+    Unblock(Player.Output.Handle);
+  if not Player.Running then
+  begin
+    SpeakPlayer;
+    Writeln('audio channel did not stay open');
+    Flush(Output);
+    ClosePlayer;
+    RetryAt := GetTickCount64 + 1000;
+    Exit;
+  end;
+  { State change: raw stream open. Silence from the timer keeps HDMI awake. }
+  Writeln('audio channel open (', Name, ')');
+  Flush(Output);
+  NextFeed := 0;
+  Result := True;
+end;
+
+procedure FlushPending;
+var
+  Got: Integer;
+  Err: cint;
+begin
+  if (Player = nil) or (Player.Input = nil) or (Length(Pending) = 0) then
+    Exit;
+  Got := FileWrite(Player.Input.Handle, Pending[0], Length(Pending));
+  if Got > 0 then
+    Delete(Pending, 0, Got)
+  else if Got < 0 then
+  begin
+    Err := fpgeterrno;
+    if (Err = ESysEINTR) or (Err = ESysEAGAIN) or (Err = ESysEWOULDBLOCK) then
+      Exit;
+    SpeakPlayer;
+    Writeln('audio channel closed');
+    Flush(Output);
+    ClosePlayer;
+    RetryAt := GetTickCount64 + 1000;
+  end;
+end;
+
+procedure FillChunk(var Frames: array of SmallInt);
+var
+  I, N: Integer;
+  Src: PSmallInt;
+  Want: Boolean;
+  Mode: TAudioMode;
+begin
+  Want := (Controller <> nil) and Controller.AudioShouldPlay;
+  if Controller <> nil then
+    Mode := Controller.Model.Config.Audio
+  else
+    Mode := amMute;
+  if Want and ((Ord(Mode) <> LastAudio) or (Want <> LastPlay) or (Length(MarchPcm) = 0)) then
+  begin
+    MarchPcm := BuildMarchPcm(Mode);
+    MarchPos := 0;
+  end;
+  LastAudio := Ord(Mode);
+  LastPlay := Want;
+  if (not Want) or (Length(MarchPcm) < 2) then
+  begin
+    FillChar(Frames[0], Length(Frames) * SizeOf(SmallInt), 0);
+    Exit;
+  end;
+  N := Length(MarchPcm) div 2;
+  Src := PSmallInt(@MarchPcm[0]);
+  for I := 0 to High(Frames) do
+  begin
+    Frames[I] := Src[MarchPos];
+    Inc(MarchPos);
+    if MarchPos >= N then
+      MarchPos := 0;
+  end;
+end;
+
+procedure PumpAudio;
+var
+  Now: QWord;
+  Frames: array[0..ChunkFrames - 1] of SmallInt;
+  Old: Integer;
+begin
+  if (Player = nil) or not Player.Running then
+  begin
+    if (Player <> nil) and not Player.Running then
+    begin
+      SpeakPlayer;
+      Writeln('audio channel closed');
+      Flush(Output);
+      ClosePlayer;
+      RetryAt := GetTickCount64 + 1000;
+    end;
+    if not OpenPlayer then
+      Exit;
+  end;
+  SpeakPlayer;
+  Now := GetTickCount64;
+  if Now >= NextFeed then
+  begin
+    { One slice per tick. A second slice would sit in the pipe and
+      the march would drift away from the wings. }
+    if Length(Pending) < ChunkFrames * 2 then
+    begin
+      FillChunk(Frames);
+      Old := Length(Pending);
+      SetLength(Pending, Old + SizeOf(Frames));
+      Move(Frames[0], Pending[Old], SizeOf(Frames));
+    end;
+    NextFeed := Now + TickMs;
+  end;
+  FlushPending;
+end;
 
 procedure DestroyPix;
 begin
@@ -164,6 +409,7 @@ end;
 function OnTick(Data: gpointer): gboolean; cdecl;
 begin
   Controller.Tick;
+  PumpAudio;
   if Controller.NeedsPresent then
     Present;
   Result := True;
@@ -326,6 +572,12 @@ begin
   AreaW := WinW;
   AreaH := WinH;
   Pix := nil;
+  LastAudio := -1;
+  LastPlay := False;
+  MarchPos := 0;
+  NextFeed := 0;
+  RetryAt := 0;
+  Reported := False;
 
   MainWin := gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title(PGtkWindow(MainWin), 'Flying Toasters');
@@ -352,7 +604,9 @@ begin
   g_timeout_add(TickMs, TGSourceFunc(@OnTick), nil);
   Present;
   gtk_widget_show_all(MainWin);
+  OpenPlayer;
   gtk_main;
+  ClosePlayer;
   DestroyPix;
   Controller.Free;
 end;

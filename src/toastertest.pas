@@ -45,8 +45,9 @@ var
   X0, Y0, DX, DY: Single;
   I: Integer;
   Moved: Boolean;
-  Midi, Wav: TBytes;
+  Midi, Wav, Pcm: TBytes;
   FoundTrk: Boolean;
+  Peak, Sample: Integer;
 begin
   ExpectNear('45deg |dx|', Abs(FlightDX(100)), 100 * InvSqrt2, 1e-5);
   ExpectNear('45deg |dy|', Abs(FlightDY(100)), 100 * InvSqrt2, 1e-5);
@@ -142,6 +143,16 @@ begin
   Wav := BuildMarchWav(amMarch);
   ExpectTrue('wav header', (Length(Wav) > 1000) and (Wav[0] = Ord('R')) and
     (Wav[8] = Ord('W')));
+  Pcm := BuildMarchPcm(amMarch);
+  ExpectTrue('pcm has samples', Length(Pcm) > 1000);
+  Peak := 0;
+  for I := 0 to (Length(Pcm) div 2) - 1 do
+  begin
+    Sample := PSmallInt(@Pcm[I * 2])^;
+    if Abs(Sample) > Peak then
+      Peak := Abs(Sample);
+  end;
+  ExpectTrue('pcm is not silence', Peak > 1000);
 
   WriteLn('All toaster tests passed.');
 end.

@@ -70,7 +70,9 @@ open build/FlyingToasters.app
 4. **F11** (or **View → Full Screen**, or **double-click** the sky) goes fullscreen. **Esc** leaves it. On macOS the green traffic-light button and **Ctrl+Cmd+F** do the same native fullscreen.
 5. **Flying Toasters → About** lists the keys. Closing the window quits. The last look is saved to a per-user INI, like Moiré.
 
-**M** cycles Mute / MIDI march / Choir, or use **Sound → MIDI March**. That plays an original looping tribute (square-lead GM on Mac via the DLS synth, WAV fallback; Windows `PlaySound`). It is **not** Berkeley Systems' After Dark MIDI. Space pauses the flock and the music.
+**M** cycles Mute / MIDI march / Choir, or use **Sound → MIDI March**. That plays an original looping tribute (square-lead GM on Mac via the DLS synth, WAV fallback; Windows `PlaySound`; Linux one raw `pw-play` / `paplay` / `aplay` stream). It is **not** Berkeley Systems' After Dark MIDI. Space pauses the flock and the music.
+
+On a Raspberry Pi into an HDMI set, that Linux stream stays open and is fed silence while muted — the same Panasonic-TV lesson as NoBugs and the Hitchhiker's Guide pips. Install `pipewire-bin`, `pulseaudio-utils`, or `alsa-utils` if the march is silent.
 
 ## Where it appears
 

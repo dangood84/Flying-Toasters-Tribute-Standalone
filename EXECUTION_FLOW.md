@@ -42,7 +42,7 @@ end.
 Regular policy (no `LSUIElement`) means: **Dock icon**, Cmd-Tab, a real window. `App.run` does not return until Quit.
 
 Windows: `HostRun` registers a window class, `CreateWindowEx` with `WS_OVERLAPPEDWINDOW`, `SetTimer(33)`, then `GetMessage`.  
-Linux: `gtk_init`, `gtk_window_new`, `g_timeout_add(33, ...)`, `gtk_main`.
+Linux: `gtk_init`, `gtk_window_new`, `g_timeout_add(33, ...)`, `gtk_main`. One `pw-play` / `paplay` / `aplay` raw pipe is opened before `gtk_main` (silence keeps HDMI awake; **M** swaps in the march).
 
 ---
 
