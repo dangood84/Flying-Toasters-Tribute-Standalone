@@ -32,6 +32,7 @@ const
   MinH = 200;
   TickMs = 33;
   ChunkFrames = 728; { one paint tick, ~33 ms at MarchSampleRate }
+  BufferSlices = 3; { ~99 ms so a late paint does not starve HDMI }
 
   GDK_Escape = $FF1B;
   GDK_F11 = $FFC8;
@@ -248,12 +249,23 @@ begin
   end;
 end;
 
-procedure PumpAudio;
+procedure AppendChunk;
 var
-  Now: QWord;
   Frames: array[0..ChunkFrames - 1] of SmallInt;
   Old: Integer;
 begin
+  FillChunk(Frames);
+  Old := Length(Pending);
+  SetLength(Pending, Old + SizeOf(Frames));
+  Move(Frames[0], Pending[Old], SizeOf(Frames));
+end;
+
+procedure PumpAudio;
+var
+  Now: QWord;
+  Opened: Boolean;
+begin
+  Opened := False;
   if (Player = nil) or not Player.Running then
   begin
     if (Player <> nil) and not Player.Running then
@@ -266,20 +278,23 @@ begin
     end;
     if not OpenPlayer then
       Exit;
+    Opened := True;
   end;
   SpeakPlayer;
   Now := GetTickCount64;
-  if Now >= NextFeed then
+  if Opened then
   begin
-    { One slice per tick. A second slice would sit in the pipe and
-      the march would drift away from the wings. }
-    if Length(Pending) < ChunkFrames * 2 then
-    begin
-      FillChunk(Frames);
-      Old := Length(Pending);
-      SetLength(Pending, Old + SizeOf(Frames));
-      Move(Frames[0], Pending[Old], SizeOf(Frames));
-    end;
+    { Prime HDMI so the first note is not a starved buffer. }
+    while Length(Pending) < ChunkFrames * 2 * BufferSlices do
+      AppendChunk;
+    NextFeed := Now + TickMs;
+  end
+  else if Now >= NextFeed then
+  begin
+    { Keep about 90 ms in the pipe. The march is a loop, not a
+      letter-synced pip, so a short cushion will not walk the tune. }
+    if Length(Pending) < ChunkFrames * 2 * BufferSlices then
+      AppendChunk;
     NextFeed := Now + TickMs;
   end;
   FlushPending;

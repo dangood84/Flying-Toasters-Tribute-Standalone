@@ -47,7 +47,7 @@ var
   Moved: Boolean;
   Midi, Wav, Pcm: TBytes;
   FoundTrk: Boolean;
-  Peak, Sample: Integer;
+  Peak, Sample, First, Last: Integer;
 begin
   ExpectNear('45deg |dx|', Abs(FlightDX(100)), 100 * InvSqrt2, 1e-5);
   ExpectNear('45deg |dy|', Abs(FlightDY(100)), 100 * InvSqrt2, 1e-5);
@@ -153,6 +153,9 @@ begin
       Peak := Abs(Sample);
   end;
   ExpectTrue('pcm is not silence', Peak > 1000);
+  First := PSmallInt(@Pcm[0])^;
+  Last := PSmallInt(@Pcm[Length(Pcm) - 2])^;
+  ExpectTrue('loop join is quiet', (Abs(First) < 2500) and (Abs(Last) < 2500));
 
   WriteLn('All toaster tests passed.');
 end.

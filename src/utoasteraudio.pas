@@ -95,7 +95,7 @@ begin
   AddNote(12.5, 0.45, 62, 96, 0);
   AddNote(13.0, 0.45, 60, 100, 0);
   AddNote(13.5, 0.45, 55, 96, 0);
-  AddNote(14.0, 1.90, 60, 114, 0);
+  AddNote(14.0, 2.00, 60, 114, 0);
 
   { Bass ostinato. Chan 1. }
   AddNote(0.0, 0.95, 36, 90, 1);
@@ -112,7 +112,7 @@ begin
   AddNote(11.0, 0.95, 43, 82, 1);
   AddNote(12.0, 0.95, 36, 90, 1);
   AddNote(13.0, 0.95, 31, 84, 1);
-  AddNote(14.0, 1.90, 36, 94, 1);
+  AddNote(14.0, 2.00, 36, 94, 1);
 end;
 
 function MidiLoopSeconds: Double;
@@ -272,15 +272,55 @@ begin
   end;
 end;
 
+function NoteGain(T, A, B: Double): Double;
+const
+  Attack = 0.014;
+  Release = 0.045;
+var
+  Into, Left: Double;
+begin
+  if (T < A) or (T >= B) then
+    Exit(0);
+  Into := T - A;
+  Left := B - T;
+  Result := 1.0;
+  if Into < Attack then
+    Result := Into / Attack;
+  if Left < Release then
+    Result := Result * (Left / Release);
+  if Result < 0 then
+    Result := 0;
+end;
+
+procedure WindowLoop(var Buf: array of SmallInt; Rate: Double);
+var
+  FadeN, I: Integer;
+  G: Double;
+begin
+  FadeN := Round(Rate * 0.040);
+  if FadeN < 8 then
+    Exit;
+  if FadeN * 2 >= Length(Buf) then
+    Exit;
+  for I := 0 to FadeN - 1 do
+  begin
+    G := (I + 1) / FadeN;
+    Buf[I] := SmallInt(Round(Buf[I] * G));
+    Buf[High(Buf) - I] := SmallInt(Round(Buf[High(Buf) - I] * G));
+  end;
+end;
+
 function BuildMarchWav(Mode: TAudioMode): TBytes;
 var
   Samples, I, N, SCount: Integer;
-  Acc, Phase, Hz, Amp, T, Duty: Double;
+  Acc, Phase, Hz, Amp, T, Duty, Soft, A, B: Double;
+  Buf: array of SmallInt;
   V: SmallInt;
   P: Integer;
 begin
   EnsureScore;
   Samples := Round(MarchSampleRate * MidiLoopSeconds);
+  SetLength(Buf, Samples);
   SetLength(Result, 44 + Samples * 2);
   FillChar(Result[0], Length(Result), 0);
   Result[0] := Ord('R'); Result[1] := Ord('I'); Result[2] := Ord('F'); Result[3] := Ord('F');
@@ -300,31 +340,40 @@ begin
   if Mode = amChoir then
     Duty := 0.35;
   SCount := Length(Score);
+  Soft := 0;
   for I := 0 to Samples - 1 do
   begin
     T := I / MarchSampleRate;
     Acc := 0;
     for N := 0 to SCount - 1 do
     begin
-      if (T >= Score[N].Start * 60.0 / MidiBpm) and
-         (T < (Score[N].Start + Score[N].Dur) * 60.0 / MidiBpm) then
-      begin
-        Hz := 440.0 * Power(2.0, (Score[N].Pitch - 69) / 12.0);
-        Phase := Frac(T * Hz);
-        Amp := Score[N].Vel / 127.0 * 0.22;
-        if Score[N].Chan = 1 then
-          Amp := Amp * 0.7;
-        if Phase < Duty then
-          Acc := Acc + Amp
-        else
-          Acc := Acc - Amp;
-      end;
+      A := Score[N].Start * 60.0 / MidiBpm;
+      B := (Score[N].Start + Score[N].Dur) * 60.0 / MidiBpm;
+      Amp := NoteGain(T, A, B);
+      if Amp <= 0 then
+        Continue;
+      Hz := 440.0 * Power(2.0, (Score[N].Pitch - 69) / 12.0);
+      Phase := Frac((T - A) * Hz);
+      Amp := Amp * Score[N].Vel / 127.0 * 0.22;
+      if Score[N].Chan = 1 then
+        Amp := Amp * 0.7;
+      if Phase < Duty then
+        Acc := Acc + Amp
+      else
+        Acc := Acc - Amp;
     end;
+    Soft := Soft + 0.38 * (Acc - Soft);
+    Acc := Soft;
     if Acc > 0.95 then
       Acc := 0.95;
     if Acc < -0.95 then
       Acc := -0.95;
-    V := Round(Acc * 32767);
+    Buf[I] := SmallInt(Round(Acc * 32767));
+  end;
+  WindowLoop(Buf, MarchSampleRate);
+  for I := 0 to Samples - 1 do
+  begin
+    V := Buf[I];
     Result[44 + I * 2] := Byte(V);
     Result[45 + I * 2] := Byte(V shr 8);
   end;
