@@ -104,7 +104,7 @@ Picks one host with `{$IFDEF}` and calls `HostRun`. Nothing else.
 
 Density 5–30, toast darkness, accessories, starfield, karaoke, audio mode, HUD. `LoadConfig` / `SaveConfig` write `flyingtoasters.ini` under `GetAppConfigDir`. **M** / **Sound → MIDI March** plays an original looping GM square-lead march (not After Dark's theme). Choir is the same score on GM choir aahs. Pause mutes playback.
 
-Linux does not spawn a player per toggle. `uhostgtk` opens one `pw-play` / `paplay` / `aplay` raw pipe at launch (the NoBugs / Hitchhiker's Panasonic-HDMI trick) and the 33 ms timer writes one slice. Mute is silence into that same pipe so the TV port stays awake.
+Linux does not spawn a player per toggle. `uhostgtk` opens one `pw-play` / `paplay` / `aplay` raw pipe at launch (the NoBugs / Hitchhiker's Panasonic-HDMI trick) and keeps about a second of samples ahead of the paint loop, catching up by wall clock so a slow Pi frame does not stutter. Mute is silence into that same pipe so the TV port stays awake.
 
 ### `utoastermodel` — the flock
 

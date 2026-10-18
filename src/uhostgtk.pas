@@ -11,7 +11,9 @@ unit uhostgtk;
   window. NoBugs on a Panasonic television taught this: a fresh player
   for every shout lets HDMI fall asleep, so the first pip is late or
   missing. Silence keeps the port awake; MIDI/choir is mixed into the
-  next short slice. }
+  same pipe. The march is a loop, so the feeder keeps about a second
+  queued and catches up by wall clock — a slow toaster paint must not
+  starve HDMI. }
 
 interface
 
@@ -31,8 +33,9 @@ const
   MinW = 320;
   MinH = 200;
   TickMs = 33;
-  ChunkFrames = 728; { one paint tick, ~33 ms at MarchSampleRate }
-  BufferSlices = 3; { ~99 ms so a late paint does not starve HDMI }
+  ChunkFrames = 1102; { ~50 ms at MarchSampleRate }
+  CushionMs = 1000; { keep this much audio ahead of the paint loop }
+  MaxPendingBytes = MarchSampleRate * 2 * 2; { 2 s of s16 mono }
 
   GDK_Escape = $FF1B;
   GDK_F11 = $FFC8;
@@ -53,7 +56,8 @@ var
   MarchPos: Integer;
   LastAudio: Integer;
   LastPlay: Boolean;
-  NextFeed: QWord;
+  FeedOrigin: QWord;
+  QueuedFrames: Int64;
   RetryAt: QWord;
   Reported: Boolean;
 
@@ -187,7 +191,8 @@ begin
   { State change: raw stream open. Silence from the timer keeps HDMI awake. }
   Writeln('audio channel open (', Name, ')');
   Flush(Output);
-  NextFeed := 0;
+  FeedOrigin := 0;
+  QueuedFrames := 0;
   Result := True;
 end;
 
@@ -264,6 +269,8 @@ procedure PumpAudio;
 var
   Now: QWord;
   Opened: Boolean;
+  TargetFrames: Int64;
+  ElapsedMs: QWord;
 begin
   Opened := False;
   if (Player = nil) or not Player.Running then
@@ -282,20 +289,27 @@ begin
   end;
   SpeakPlayer;
   Now := GetTickCount64;
-  if Opened then
+  if Opened or (FeedOrigin = 0) then
   begin
-    { Prime HDMI so the first note is not a starved buffer. }
-    while Length(Pending) < ChunkFrames * 2 * BufferSlices do
-      AppendChunk;
-    NextFeed := Now + TickMs;
-  end
-  else if Now >= NextFeed then
+    FeedOrigin := Now;
+    QueuedFrames := 0;
+  end;
+  ElapsedMs := Now - FeedOrigin;
+  { Stay about a second ahead of the wall clock. If a paint took 80 ms
+    we write 80 ms, not one 33 ms slice — that was the stutter. }
+  TargetFrames := Int64(ElapsedMs + CushionMs) * MarchSampleRate div 1000;
+  if TargetFrames < QueuedFrames then
+    TargetFrames := QueuedFrames;
+  if TargetFrames > QueuedFrames + Int64(MarchSampleRate) * 2 then
   begin
-    { Keep about 90 ms in the pipe. The march is a loop, not a
-      letter-synced pip, so a short cushion will not walk the tune. }
-    if Length(Pending) < ChunkFrames * 2 * BufferSlices then
-      AppendChunk;
-    NextFeed := Now + TickMs;
+    FeedOrigin := Now;
+    QueuedFrames := 0;
+    TargetFrames := Int64(CushionMs) * MarchSampleRate div 1000;
+  end;
+  while (QueuedFrames < TargetFrames) and (Length(Pending) < MaxPendingBytes) do
+  begin
+    AppendChunk;
+    Inc(QueuedFrames, ChunkFrames);
   end;
   FlushPending;
 end;
@@ -423,10 +437,13 @@ end;
 
 function OnTick(Data: gpointer): gboolean; cdecl;
 begin
-  Controller.Tick;
   PumpAudio;
+  Controller.Tick;
   if Controller.NeedsPresent then
     Present;
+  { Present on a Pi can take longer than one tick. Top the pipe up
+    again so the next expose blit does not play from an empty buffer. }
+  PumpAudio;
   Result := True;
 end;
 
@@ -455,6 +472,7 @@ var
   DestW, DestH: Integer;
 begin
   Result := False;
+  PumpAudio;
   if (Pix = nil) or (Widget^.window = nil) then
     Exit;
   DestW := gdk_pixbuf_get_width(Pix);
@@ -462,6 +480,7 @@ begin
   gdk_pixbuf_render_to_drawable(Pix, Widget^.window,
     Widget^.style^.fg_gc[GTK_WIDGET_STATE(Widget)],
     0, 0, 0, 0, DestW, DestH, GDK_RGB_DITHER_NONE, 0, 0);
+  PumpAudio;
 end;
 
 function OnButtonPress(Widget: PGtkWidget; Event: PGdkEvent; Data: gpointer): gboolean; cdecl;
@@ -590,7 +609,8 @@ begin
   LastAudio := -1;
   LastPlay := False;
   MarchPos := 0;
-  NextFeed := 0;
+  FeedOrigin := 0;
+  QueuedFrames := 0;
   RetryAt := 0;
   Reported := False;
 
@@ -620,6 +640,7 @@ begin
   Present;
   gtk_widget_show_all(MainWin);
   OpenPlayer;
+  PumpAudio;
   gtk_main;
   ClosePlayer;
   DestroyPix;
